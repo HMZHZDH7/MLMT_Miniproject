@@ -22,10 +22,18 @@ library(purrr)
 library(nnet)
 library(doParallel) # parallel processing
 registerDoParallel()
-require(foreach)
 require(iterators)
 require(parallel)
+require(foreach)
+require(iterators)
 library(skimr)
+library(ggbeeswarm)
+library('BBmisc')
+devtools::install_github("laresbernardo/lares")
+library(lares)
+library(cluster)
+library(nnet)
+  
 
 Cancer.rawdata <- read.csv("C:/Users/hziad/Documents/MLMT_miniproj_cancer/data.csv", sep=",")
 ```
@@ -33,87 +41,125 @@ Cancer.rawdata <- read.csv("C:/Users/hziad/Documents/MLMT_miniproj_cancer/data.c
 ```{r loading data, echo=FALSE}
 str(Cancer.rawdata)
 
-bc_data <- Cancer.rawdata
-bc_data$diagnosis <- as.factor(bc_data$diagnosis)
+raw_data <- Cancer.rawdata
+raw_data$diagnosis <- as.factor(raw_data$diagnosis)
 
-head(bc_data)
+head(raw_data)
 
-sapply(bc_data, function(x) sum(is.na(x)))
+sapply(raw_data, function(x) sum(is.na(x)))
 
-bc_data %>%
+raw_data %>%
   group_by(diagnosis)%>%
   skim()
 ```
 
 ```{r Plotting Features}
-#Break up columns into groups, according to their suffix designation 
-#(_mean, _se,and __worst) to perform visualisation plots off.
 data_mean <- Cancer.rawdata[ ,c("diagnosis", "radius_mean", "texture_mean","perimeter_mean", "area_mean", "smoothness_mean", "compactness_mean", "concavity_mean", "concave.points_mean", "symmetry_mean", "fractal_dimension_mean" )]
 data_se <- Cancer.rawdata[ ,c("diagnosis", "radius_se", "texture_se","perimeter_se", "area_se", "smoothness_se", "compactness_se", "concavity_se", "concave.points_se", "symmetry_se", "fractal_dimension_se" )]
 data_worst <- Cancer.rawdata[ ,c("diagnosis", "radius_worst", "texture_worst","perimeter_worst", "area_worst", "smoothness_worst", "compactness_worst", "concavity_worst", "concave.points_worst", "symmetry_worst", "fractal_dimension_worst" )]
 
 
-#Plot histograms of "_mean" variables group by diagnosis
 ggplot(data = melt(data_mean, id.var = "diagnosis"), mapping = aes(x = value)) + theme_minimal() + 
     geom_histogram(bins = 10, aes(fill=as.factor(diagnosis)), alpha=0.5) + facet_wrap(~variable, scales =      'free_x') + labs(fill="Diagnosis") + 
   scale_fill_discrete(labels = c("Benign", "Malignant")) + theme(axis.title.x = element_blank(), axis.title.y = element_blank())
 
-#Plot histograms of "_se" variables group by diagnosis
+
 ggplot(data = melt(data_se, id.var = "diagnosis"), mapping = aes(x = value))  + theme_minimal() + 
     geom_histogram(bins = 10, aes(fill=as.factor(diagnosis)), alpha=0.5) + facet_wrap(~variable, scales = 'free_x') + labs(fill="Diagnosis") + 
   scale_fill_discrete(labels = c("Benign", "Malignant")) + theme(axis.title.x = element_blank(), axis.title.y = element_blank())
 
-#Plot histograms of "_worst" variables group by diagnosis
+
 ggplot(data = melt(data_worst, id.var = "diagnosis"), mapping = aes(x = value))  + theme_minimal() + 
     geom_histogram(bins = 10, aes(fill=as.factor(diagnosis)), alpha=0.5) + facet_wrap(~variable, scales = 'free_x') + labs(fill="Diagnosis") + 
   scale_fill_discrete(labels = c("Benign", "Malignant")) + theme(axis.title.x = element_blank(), axis.title.y = element_blank())
 ```
 
+```{r swarm}
+data_mean_con <- Cancer.rawdata[ ,c("diagnosis", "concave.points_mean" )]
+data_mean_frac <- Cancer.rawdata[ ,c("diagnosis", "fractal_dimension_mean" )]  
+
+
+
+ggplot(data = melt(data_mean_con, id.var = "diagnosis"), mapping = aes(x = diagnosis, y= value, fill=as.factor(diagnosis))) + theme_minimal() + 
+    geom_violin(trim = FALSE, alpha=0.5) + facet_wrap(~variable, scales = 'free_x') + labs(fill="Diagnosis") + 
+  scale_fill_discrete(labels = c("Benign", "Malignant")) + theme(axis.title.x = element_blank(), axis.title.y = element_blank())+ 
+  geom_boxplot(width = 0.2)
+
+
+ggplot(data = melt(data_mean_frac, id.var = "diagnosis"), mapping = aes(x = diagnosis, y= value, fill=as.factor(diagnosis))) + theme_minimal() + 
+    geom_violin(trim = FALSE, alpha=0.5) + facet_wrap(~variable, scales = 'free_x') + labs(fill="Diagnosis") + 
+  scale_fill_discrete(labels = c("Benign", "Malignant")) + theme(axis.title.x = element_blank(), axis.title.y = element_blank())+ 
+  geom_boxplot(width = 0.2)
+
+corr_var(Cancer.rawdata, 
+  diagnosis, 
+  bottom = 30 
+)
+
+corr_cross(Cancer.rawdata,
+  max_pvalue = 0.05,
+  top = 10 
+)
+data_highestcor <- Cancer.rawdata[ ,c("diagnosis", "perimeter_mean", "radius_mean" )] 
+
+ggplot(data_highestcor, aes(x = perimeter_mean, y = radius_mean, color = as.factor(diagnosis))) + 
+  geom_point(size = 3) + 
+  geom_point(shape = 1, size = 3) + 
+  stat_smooth(method = "lm", fullrange = TRUE) +labs(fill="Diagnosis") + 
+  scale_fill_discrete(labels = c("Benign", "Malignant")) + theme(axis.title.x = element_blank(), axis.title.y = element_blank())  + theme_minimal()
+
+```
+
 ```{r Correlation Plots}
-corMatMy <- cor(bc_data[,2:31])
-corrplot(corMatMy, order = "hclust", tl.cex = 0.7)
+cor <- cor(raw_data[,2:31])
+corrplot(cor, order = "hclust", tl.cex = 0.7)
 
-highlyCor <- colnames(bc_data)[findCorrelation(corMatMy, cutoff = 0.9, verbose = TRUE)]
+thresh <- colnames(raw_data)[findCorrelation(cor, cutoff = 0.9, verbose = TRUE)]
 
-bc_data_cor <- bc_data[, which(!colnames(bc_data) %in% highlyCor)]
+raw_data_cor <- raw_data[, which(!colnames(raw_data) %in% thresh)]
 ```
 
 ```{r PCA Time}
-cancer.pca <- prcomp(bc_data[, 2:31], center=TRUE, scale=TRUE)
-plot(cancer.pca, type="l", main='')
+pca <- prcomp(raw_data[, 2:31], center=TRUE, scale=TRUE)
+plot(pca, type="l", main='')
 grid(nx = 10, ny = 14)
 title(main = "Principal components weight", sub = NULL, xlab = "Components")
 box()
-summary(cancer.pca)
-pca_var <- cancer.pca$sdev^2
+summary(pca)
+pca_var <- pca$sdev^2
 pve_df <- pca_var / sum(pca_var)
 cum_pve <- cumsum(pve_df)
-pve_table <- tibble(comp = seq(1:ncol(bc_data %>% select(-diagnosis))), pve_df, cum_pve)
+pve_table <- tibble(comp = seq(1:ncol(raw_data %>% select(-diagnosis))), pve_df, cum_pve)
 ggplot(pve_table, aes(x = comp, y = cum_pve)) + 
   geom_point() + 
   geom_abline(intercept = 0.95, color = "red", slope = 0) + theme_minimal()
-pca_df <- as.data.frame(cancer.pca$x)
-ggplot(pca_df, aes(x=PC1, y=PC2, col=bc_data$diagnosis)) + geom_point(alpha=0.5)
+pca_df <- as.data.frame(pca$x)
+ggplot(pca_df, aes(x=PC1, y=PC2, col=raw_data$diagnosis)) + geom_point(alpha=0.5)
 
-cancer.pca2 <- prcomp(bc_data_cor, center=TRUE, scale=TRUE)
-summary(cancer.pca2)
-pca_var2 <- cancer.pca2$sdev^2
+pca2 <- prcomp(raw_data_cor, center=TRUE, scale=TRUE)
+summary(pca2)
+pca_var2 <- pca2$sdev^2
 pve_df2 <- pca_var2 / sum(pca_var2)
 cum_pve2 <- cumsum(pve_df2)
-pve_table2 <- tibble(comp = seq(1:ncol(bc_data_cor)), pve_df2, cum_pve2)
+pve_table2 <- tibble(comp = seq(1:ncol(raw_data_cor)), pve_df2, cum_pve2)
 ggplot(pve_table2, aes(x = comp, y = cum_pve2)) + 
   geom_point() + 
-  geom_abline(intercept = 0.95, color = "red", slope = 0)
-pca2_df <- as.data.frame(cancer.pca2$x)
-ggplot(pca2_df, aes(x=PC1, y=PC2, col=bc_data$diagnosis)) + geom_point(alpha=0.5)
+  geom_abline(intercept = 0.95, color = "red", slope = 0)  + theme_minimal()
+pca2_df <- as.data.frame(pca2$x)
 
-#df_pcs <- cbind(as_tibble(bc_data$diagnosis), as_tibble(cancer.pca2$x))
+ggplot(pca2_df, aes(x=PC1, y=PC2, col=raw_data$diagnosis)) + geom_point(alpha=0.5) + theme_minimal() + labs(fill="Diagnosis") + 
+  scale_fill_discrete(labels = c("Benign", "Malignant")) + theme(axis.title.x = element_blank(), axis.title.y = element_blank())
+
+autoplot(fanny(pca2_df, 2), data = raw_data, colour = 'diagnosis', frame = TRUE)+ theme_minimal()
+
+#pca2$diagnosis <- raw_data$diagnosis
+
+#df_pcs <- cbind(as_tibble(raw_data$diagnosis), as_tibble(pca2$x))
 #GGally::ggpairs(df_pcs, ggplot2::aes(color = value))
 ```
 
 ```{r Split Data for Training}
-set.seed(1234)
-df <- cbind(diagnosis = bc_data$diagnosis, bc_data_cor)
+df <- cbind(diagnosis = raw_data$diagnosis, raw_data_cor)
 train_indx <- createDataPartition(df$diagnosis, p = 0.7, list = FALSE)
 
 train_set <- df[train_indx,]
@@ -129,7 +175,7 @@ fitControl <- trainControl(method="cv",
 ```
 
 ```{r Random Forest}
-model_rf <- train(diagnosis~.,
+rf <- train(diagnosis~.,
                   data = train_set,
                   method="rf",
                   metric="ROC",
@@ -137,8 +183,8 @@ model_rf <- train(diagnosis~.,
                   preProcess = c('center', 'scale'),
                   trControl=fitControl)
 
-plot(varImp(model_rf), top = 10, main = "Random forest")
-pred_rf <- predict(model_rf, test_set)
+plot(varImp(rf), top = 10, main = "Random forest")
+pred_rf <- predict(rf, test_set)
 cm_rf <- confusionMatrix(pred_rf, test_set$diagnosis, positive = "Malignant")
 cm_rf
 
@@ -153,6 +199,7 @@ pred_pca_rf <- predict(model_pca_rf, test_set)
 cm_pca_rf <- confusionMatrix(pred_pca_rf, test_set$diagnosis, positive = "Malignant")
 cm_pca_rf
 ```
+
 ```{r Split Data for Training}
 model_knn <- train(diagnosis~.,
                    data = train_set,
@@ -166,6 +213,7 @@ pred_knn <- predict(model_knn, test_set)
 cm_knn <- confusionMatrix(pred_knn, test_set$diagnosis, positive = "Malignant")
 cm_knn
 ```
+
 ```{r Neural Network}
 model_nnet <- train(diagnosis~.,
                     data = train_set,
@@ -190,18 +238,36 @@ model_pca_nnet <- train(diagnosis~.,
 pred_pca_nnet <- predict(model_pca_nnet, test_set)
 cm_pca_nnet <- confusionMatrix(pred_pca_nnet, test_set$diagnosis, positive = "Malignant")
 cm_pca_nnet
+
 ```
+
 ```{r SVM}
 model_svm <- train(diagnosis~.,
                     data = train_set,
                     method="svmRadial",
                     metric="ROC",
-                    preProcess=c('center', 'scale'),
+                    preProcess=c('center', 'scale', 'pca'),
                     trace=FALSE,
                     trControl=fitControl)
 pred_svm <- predict(model_svm, test_set)
 cm_svm <- confusionMatrix(pred_svm, test_set$diagnosis, positive = "Malignant")
 cm_svm
+
+x=data.frame(pca2_df$PC1,pca2_df$PC2)
+y= as.factor(raw_data$diagnosis)
+s <- seq(from=-10,to=10,length=400)
+rfit <- train(x, y, method="svmRadial")
+rsv <- as.data.frame(x[rfit$finalModel@SVindex,])
+grid <- expand.grid(x1=s,x2=s)
+grid$y <- predict(rfit, newdata=grid)
+grid$yy <- 2*(as.numeric(grid$y) - 1.5)
+
+dat <- data.frame(Diagnosis = as.factor(raw_data$diagnosis), PC1 = pca2_df$PC1, PC2 = pca2_df$PC2)
+
+ggplot(data = dat, aes(PC1, PC2, col=Diagnosis)) + geom_point() + 
+  #geom_point(data=rsv, col="black", size=5, shape=21)# +
+ geom_contour(data=grid, aes(x1,x2,z=yy, fill=yy), breaks=0, col="deeppink3", size = 1)+ theme_minimal() #+
+  #geom_raster(data=grid, aes(x1,x2), alpha=.2)
 ```
 
 ```{r Naive Bayes}
@@ -218,17 +284,17 @@ cm_nb
 ```
 
 ```{r Model Evaluation}
-model_list <- list(RF=model_rf, PCA_RF=model_pca_rf, 
+list <- list(RF=model_rf, PCA_RF=model_pca_rf, 
                    NNET=model_nnet, PCA_NNET=model_pca_nnet,  
                    KNN = model_knn, SVM=model_svm, NB=model_nb)
-resamples <- resamples(model_list)
+res <- resamples(list)
 
-bwplot(resamples, metric = "ROC")
-cm_list <- list(RF=cm_rf, PCA_RF=cm_pca_rf, 
+bwplot(res, metric = "ROC")
+con <- list(RF=cm_rf, PCA_RF=cm_pca_rf, 
                    NNET=cm_nnet, PCA_NNET=cm_pca_nnet,  
                    KNN = cm_knn, SVM=cm_svm, NB=cm_nb)
 
-results <- sapply(cm_list, function(x) x$byClass)
+results <- sapply(con, function(x) x$byClass)
 results
 
 results_max <- apply(results, 1, which.is.max)
@@ -241,4 +307,3 @@ output_report <- data.frame(metric=names(results_max),
 rownames(output_report) <- NULL
 output_report
 ```
-
